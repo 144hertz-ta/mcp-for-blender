@@ -1094,31 +1094,14 @@ def _blendermcp_depsgraph_post(scene, depsgraph=None):
 
 
 def _telemetry_consent_enabled():
-    """Read the consent preference directly. Fails closed."""
-    try:
-        addon_prefs = bpy.context.preferences.addons.get(__name__)
-        if not addon_prefs:
-            return False
-        return bool(addon_prefs.preferences.telemetry_consent)
-    except Exception:
-        return False
+    """Telemetry is removed in this fork; consent is never granted."""
+    return False
 
 
 def _register_edit_capture_handlers():
-    """Attach manual-edit handlers, but only with telemetry consent."""
-    if not _telemetry_consent_enabled():
-        _unregister_edit_capture_handlers()
-        return False
-
-    handlers = [
-        (bpy.app.handlers.undo_post, _blendermcp_undo_post),
-        (bpy.app.handlers.redo_post, _blendermcp_redo_post),
-        (bpy.app.handlers.depsgraph_update_post, _blendermcp_depsgraph_post),
-    ]
-    for handler_list, fn in handlers:
-        if fn not in handler_list:
-            handler_list.append(fn)
-    return True
+    """Manual-edit capture only fed telemetry, which this fork removes."""
+    _unregister_edit_capture_handlers()
+    return False
 
 
 def sync_edit_capture_handlers():
@@ -1734,17 +1717,10 @@ class BlenderMCPServer:
         return {"items": [m[2] for m in matches[:limit]], "total": len(matches)}
 
     def drain_human_activity(self):
-        """Return human-originated events buffered since the last drain.
-
-        Consent is enforced MCP-side (the server only drains and uploads when
-        the user has opted in), but we also refuse here so a buffer does not
-        accumulate for a user who has said no.
-        """
+        """Always empty: manual-edit capture only fed telemetry, removed in this fork."""
         try:
-            if not self.get_telemetry_consent().get("consent"):
-                get_edit_recorder().drain()
-                return {"events": []}
-            return {"events": get_edit_recorder().drain()}
+            get_edit_recorder().drain()
+            return {"events": []}
         except Exception as e:
             print(f"Error draining manual edits: {str(e)}")
             return {"error": str(e)}
@@ -3439,45 +3415,12 @@ class BlenderMCPServer:
             return {"error": f"Failed to apply texture: {str(e)}"}
 
     def get_telemetry_consent(self):
-        """Get the current telemetry consent status.
-
-        Fails closed: if preferences cannot be read we report no consent. Not
-        being able to read the preference means we do not know the user's
-        answer, which is not the same as them having said yes.
-        """
-        try:
-            # Get addon preferences - use the module name
-            addon_prefs = bpy.context.preferences.addons.get(__name__)
-            if addon_prefs:
-                consent = bool(addon_prefs.preferences.telemetry_consent)
-            else:
-                consent = False
-        except (AttributeError, KeyError):
-            consent = False
-        return {"consent": consent}
+        """Telemetry is removed in this fork. Kept so older servers get a clear no."""
+        return {"consent": False}
 
     def set_telemetry_consent(self, consent=False):
-        """Write the telemetry consent preference.
-
-        Only reached when the user answered an elicitation prompt in their MCP
-        client, or asked to opt out. Assigning the property in code skips the
-        BoolProperty update= callback, so the manual-edit handlers are
-        re-synced explicitly.
-        """
-        try:
-            addon_prefs = bpy.context.preferences.addons.get(__name__)
-            if not addon_prefs:
-                return {"error": "Could not read addon preferences"}
-            addon_prefs.preferences.telemetry_consent = bool(consent)
-        except (AttributeError, KeyError) as e:
-            return {"error": f"Could not set telemetry consent: {e}"}
-
-        try:
-            sync_edit_capture_handlers()
-        except Exception as e:
-            print(f"BlenderMCP: could not sync manual edit handlers: {e}")
-
-        return {"consent": bool(consent)}
+        """Telemetry is removed in this fork; consent can't be turned on."""
+        return {"consent": False}
 
     def get_polyhaven_status(self):
         """Get the current status of PolyHaven integration"""
@@ -6014,18 +5957,6 @@ PREMIUM_CLASSES = (
 class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
     
-    def _on_telemetry_consent_changed(self, context):
-        try:
-            sync_edit_capture_handlers()
-        except Exception as e:
-            print(f"BlenderMCP: could not sync manual edit handlers: {e}")
-
-    telemetry_consent: BoolProperty(
-        name="Allow Telemetry",
-        description="Opt in to collection of prompts, code snippets, screenshots, and trajectory data to help improve MCP for Blender. Off by default",
-        default=False,
-        update=_on_telemetry_consent_changed,
-    )
     hyper3d_api_key: bpy.props.StringProperty(
         name="Hyper3D API Key",
         subtype="PASSWORD",
@@ -6102,21 +6033,9 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
 
         # Telemetry section
         layout.label(text="Telemetry & Privacy:", icon='PREFERENCES')
-        
-        box = layout.box()
-        row = box.row()
-        row.prop(self, "telemetry_consent", text="Allow Telemetry")
 
-        # Info text
-        box.separator()
-        if self.telemetry_consent:
-            box.label(text="Opted in: We collect anonymized prompts, code, screenshots,", icon='INFO')
-            box.label(text="and trajectory data (actions, scene state, feedback).", icon='BLANK1')
-        else:
-            box.label(text="Off (default): We only collect minimal anonymous usage data", icon='INFO')
-            box.label(text="(tool names, success/failure, duration - no prompts or code).", icon='BLANK1')
-        box.separator()
-        box.label(text="Data is not linked to your name or account. Change this anytime.", icon='CHECKMARK')
+        box = layout.box()
+        box.label(text="Telemetry is removed in this fork. Nothing is collected or uploaded.", icon='CHECKMARK')
         
         # Terms and Conditions link
         box.separator()
@@ -6365,11 +6284,12 @@ class BLENDERMCP_OT_StopServer(bpy.types.Operator):
 
 #region Addon updates
 
-# The addon updates itself from the open-source repo. An update is offered only
+# The addon updates itself from this fork (not upstream, which would bring
+# telemetry back). An update is offered only
 # when main carries a strictly newer (version, protocol), so a local build that
 # is ahead of main is never "updated" backwards.
-ADDON_UPDATE_URL = "https://raw.githubusercontent.com/ahujasid/blender-mcp/main/addon.py"
-ADDON_CHANGES_URL = "https://github.com/ahujasid/blender-mcp/commits/main/addon.py"
+ADDON_UPDATE_URL = "https://raw.githubusercontent.com/144hertz-ta/mcp-for-blender/main/addon.py"
+ADDON_CHANGES_URL = "https://github.com/144hertz-ta/mcp-for-blender/commits/main/addon.py"
 ADDON_UPDATE_CHECK_ENV = "BLENDERMCP_NO_UPDATE_CHECK"
 
 _ADDON_VERSION_RE = re.compile(r'"version":\s*\((\d+)\s*,\s*(\d+)(?:\s*,\s*(\d+))?\s*\)')
